@@ -11,7 +11,7 @@
 ```yaml
 services:
   migpt-ultimate:
-    image: zhuzhu88920/migpt-ultimate:latest
+    image: ghcr.io/xgone/migpt-ultimate:patched
     ports:
       - "36592:36592"
     volumes:
@@ -28,6 +28,8 @@ docker-compose up -d
 ```
 
 然后访问 **http://localhost:36592** 输入账号密码登录后，在 Web 界面上配置你的小米账号和 API Key 即可。
+
+镜像发布在 GitHub Container Registry。若包设置为私有，先在 NAS 上执行 `docker login ghcr.io`；公开包则可直接拉取。
 
 ## 登录认证
 

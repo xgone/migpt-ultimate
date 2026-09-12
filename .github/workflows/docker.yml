@@ -9,6 +9,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,11 +25,12 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
       
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Extract version
         id: version
@@ -44,9 +49,9 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            xgone/migpt-ultimate:latest
-            xgone/migpt-ultimate:${{ github.sha }}
-            ${{ steps.version.outputs.VERSION != '' && format('xgone/migpt-ultimate:{0}', steps.version.outputs.VERSION) || '' }}
+            ghcr.io/xgone/migpt-ultimate:latest
+            ghcr.io/xgone/migpt-ultimate:${{ github.sha }}
+            ${{ steps.version.outputs.VERSION != '' && format('ghcr.io/xgone/migpt-ultimate:{0}', steps.version.outputs.VERSION) || '' }}
           labels: |
             org.opencontainers.image.title=migpt-ultimate
             org.opencontainers.image.description=小爱音箱终极解决方案

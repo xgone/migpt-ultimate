@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   migpt-ultimate:
-    image: xgone/migpt-ultimate:patched
+    image: ghcr.io/xgone/migpt-ultimate:patched
     ports:
       - "36592:36592"
     volumes:
