@@ -49,7 +49,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/xgone/migpt-ultimate:latest
+            ghcr.io/xgone/migpt-ultimate:patched
+             ghcr.io/xgone/migpt-ultimate:latest
             ghcr.io/xgone/migpt-ultimate:${{ github.sha }}
             ${{ steps.version.outputs.VERSION != '' && format('ghcr.io/xgone/migpt-ultimate:{0}', steps.version.outputs.VERSION) || '' }}
           labels: |
