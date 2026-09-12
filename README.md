@@ -90,9 +90,10 @@ prompt:
 callAIKeywords:
   - "请"
   - "你"
+# L05B/L05C（小爱音箱 Play）使用 [5, 3]；其他型号请按 miot-spec 查询
 ttsCommand:
   - 5
-  - 1
+  - 3
 ```
 
 | 配置项 | 说明 |
@@ -111,13 +112,15 @@ ttsCommand:
 
 请参考 [MiGPT-Next 教程](https://mp.weixin.qq.com/s/tmtXvcSu5EP_bDIG_KcYnA) 获取 PassToken。
 
-### Q：小爱同学总是抢话？
+### Q：小爱同学总是抢话或说“对不起，我还在学习中”？
 
-如果不刷机，无法打断小爱回复。相关教程请移步 [Open-XiaoAI](https://github.com/idootop/open-xiaoai)。
+修复版会在调用模型前直接执行 `MiNA.stop()`，并在配置了 `ttsCommand` 时播放“正在思考中”，可以减少原生小爱抢先回复。L05B/L05C 请使用 `ttsCommand: [5, 3]`。
+
+小米原生固件的云端回复存在竞态，未刷机时仍不能保证百分之百打断。需要完全禁止原生抢答时，请参考 [Open-XiaoAI](https://github.com/idootop/open-xiaoai)。
 
 ### Q：控制台能看到 AI 回答，但没有声音？
 
-部分机型需要配置 `ttsCommand` 参数。请到 [miot-spec](https://home.miot-spec.com) 查询。
+确认 `ttsCommand` 与设备型号匹配。L05B/L05C 使用 `[5, 3]`，其他型号请到 [miot-spec](https://home.miot-spec.com) 查询。修复版会在日志中输出 MIoT 播放结果，`true` 表示设备接口接受了动作。
 
 ## 项目结构
 

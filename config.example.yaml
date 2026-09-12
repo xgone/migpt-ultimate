@@ -18,6 +18,7 @@ callAIKeywords:
 memory:
   enabled: false
   maxRecords: 100
+# L05B/L05C（小爱音箱 Play）使用 [5, 3]；其他型号请按 miot-spec 查询
 ttsCommand:
   - 5
-  - 1
+  - 3

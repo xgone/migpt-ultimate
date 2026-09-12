@@ -297,9 +297,20 @@ const HTML = `<!DOCTYPE html>
         <input type="password" class="form-input" id="apiKey" placeholder="输入 API Key">
       </div>
       <div class="form-section" style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" id="ttsCommandEnabled" style="width:18px;height:18px;">
-        <label class="form-label" style="margin:0;">启用 TTS Command (解决部分小爱不播放声音问题)</label>
+        <input type="checkbox" id="ttsCommandEnabled" onchange="updateTtsCommandVisibility()" style="width:18px;height:18px;">
+        <label class="form-label" style="margin:0;">启用 TTS Command</label>
       </div>
+      <div id="ttsCommandConfig" class="form-row" style="display:none;">
+        <div class="form-section">
+          <label class="form-label">SIID</label>
+          <input type="number" class="form-input" id="ttsSiid" value="5" min="1" step="1">
+        </div>
+        <div class="form-section">
+          <label class="form-label">AIID</label>
+          <input type="number" class="form-input" id="ttsAiid" value="3" min="1" step="1">
+        </div>
+      </div>
+      <div class="form-hint">L05B/L05C 通常使用 [5, 3]；其他型号请按 miot-spec 查询。</div>
       <div class="divider"></div>
       <div class="form-section">
         <label class="form-label">自定义 TTS 服务</label>
@@ -454,8 +465,16 @@ const HTML = `<!DOCTYPE html>
         select.appendChild(opt);
       });
     }
+    function updateTtsCommandVisibility() {
+      var enabled = document.getElementById('ttsCommandEnabled');
+      var config = document.getElementById('ttsCommandConfig');
+      if (config) {
+        config.style.display = enabled && enabled.checked ? 'grid' : 'none';
+      }
+    }
     function updateTtsConfig() {
       onTtsProviderChange();
+      updateTtsCommandVisibility();
     }
     function setInputValue(id, value) {
       var el = document.getElementById(id);
@@ -479,7 +498,11 @@ const HTML = `<!DOCTYPE html>
             document.getElementById('apiKey').value = c.openai.apiKey || '';
           }
           var ttsCmdEl = document.getElementById('ttsCommandEnabled');
+          var ttsCommand = Array.isArray(c.ttsCommand) ? c.ttsCommand : [5, 3];
           if (ttsCmdEl) ttsCmdEl.checked = c.ttsCommand !== undefined && c.ttsCommand !== null;
+          setInputValue('ttsSiid', ttsCommand[0] ?? 5);
+          setInputValue('ttsAiid', ttsCommand[1] ?? 3);
+          updateTtsCommandVisibility();
           var ttsProviderEl = document.getElementById('ttsProvider');
           if (ttsProviderEl) ttsProviderEl.value = c.tts?.provider || '';
           setInputValue('ttsEdgeSecretKey', c.tts?.edge?.secretKey);
@@ -503,7 +526,16 @@ const HTML = `<!DOCTYPE html>
           return;
         }
         var ttsCommandEnabled = document.getElementById('ttsCommandEnabled');
-        var ttsCommand = (ttsCommandEnabled && ttsCommandEnabled.checked) ? [5, 1] : undefined;
+        var ttsCommand;
+        if (ttsCommandEnabled && ttsCommandEnabled.checked) {
+          var ttsSiid = Number.parseInt(document.getElementById('ttsSiid')?.value || '', 10);
+          var ttsAiid = Number.parseInt(document.getElementById('ttsAiid')?.value || '', 10);
+          if (!Number.isInteger(ttsSiid) || ttsSiid < 1 || !Number.isInteger(ttsAiid) || ttsAiid < 1) {
+            showToast('请输入有效的 SIID 和 AIID', 'error');
+            return;
+          }
+          ttsCommand = [ttsSiid, ttsAiid];
+        }
         var providerEl = document.getElementById('ttsProvider');
         var provider = providerEl ? providerEl.value : '';
         var ttsConfig = { provider };
@@ -667,6 +699,8 @@ function loadConfig(configPath: string): WebConfig {
       openai: { model: 'glm-4-flash-250414', baseURL: 'https://open.bigmodel.cn/api/paas/v4', apiKey: '' },
       prompt: { system: '你是一个智能助手小爱同学。' },
       callAIKeywords: ['请', '你'],
+      // L05B/L05C uses SIID 5, AIID 3 for text-to-speech.
+      ttsCommand: [5, 3],
     };
     writeFileSync(configPath, YAML.stringify(defaultConfig), 'utf-8');
     return defaultConfig;
@@ -691,7 +725,30 @@ function buildMiGPTConfig(webConfig: WebConfig): MiGPTConfig {
       if (!keywords.some((e) => msg.text.startsWith(e))) {
         return undefined;
       }
-      await engine.speaker.abortXiaoAI();
+
+      // @mi-gpt/next@1.3.2 exposes abortXiaoAI(), but the implementation is a no-op.
+      // Stop the MiNA player directly before the model request to reduce native fallback speech.
+      try {
+        const stopped = await engine.MiNA.stop();
+        console.log('[TTS] 停止原生小爱回复:', stopped);
+      } catch (e) {
+        console.warn('[TTS] 停止原生小爱回复失败:', e);
+      }
+
+      // Keep the speaker occupied while the external model is responding.
+      if (ttsCommand) {
+        try {
+          const thinking = await engine.MiOT.doAction(
+            ttsCommand[0],
+            ttsCommand[1],
+            '正在思考中',
+          );
+          console.log(`[TTS] 思考提示播放结果: ${thinking}`);
+        } catch (e) {
+          console.warn('[TTS] 思考提示播放失败:', e);
+        }
+      }
+
       const text = await ChatBot.chat(msg);
       if (!text) return { handled: true };
       addLog('ai', `🤖 AI 回答: ${text}`);
@@ -701,16 +758,29 @@ function buildMiGPTConfig(webConfig: WebConfig): MiGPTConfig {
         const ttsUrl = `${ttsBaseURL}${ttsSecretPath}/tts/tts.mp3?speaker=${speaker}+text=${encodeURIComponent(text)}`;
         console.log('[TTS] Playing URL:', ttsUrl);
         try {
-          await engine.speaker.abortXiaoAI();
+          const stopped = await engine.MiNA.stop();
+          console.log('[TTS] 播放自定义音频前停止结果:', stopped);
           const result = await engine.speaker.play({ url: ttsUrl });
           console.log('[TTS] play结果:', result);
         } catch (e) {
           console.error('[TTS] play错误:', e);
         }
       } else if (ttsCommand) {
-        await engine.MiOT.doAction(ttsCommand[0], ttsCommand[1], text);
+        try {
+          const stopped = await engine.MiNA.stop();
+          console.log('[TTS] 播放 AI 答案前停止结果:', stopped);
+          const result = await engine.MiOT.doAction(ttsCommand[0], ttsCommand[1], text);
+          console.log(`[TTS] MIoT [${ttsCommand[0]},${ttsCommand[1]}] 播放结果: ${result}`);
+        } catch (e) {
+          console.error('[TTS] MIoT 播放错误:', e);
+        }
       } else {
-        await engine.speaker.play({ text });
+        try {
+          const result = await engine.speaker.play({ text });
+          console.log('[TTS] MiNA 播放结果:', result);
+        } catch (e) {
+          console.error('[TTS] MiNA 播放错误:', e);
+        }
       }
       return { handled: true };
     },
