@@ -41,9 +41,9 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            zhuzhu88920/migpt-ultimate:latest
-            zhuzhu88920/migpt-ultimate:${{ github.sha }}
-            ${{ steps.version.outputs.VERSION != '' && format('zhuzhu88920/migpt-ultimate:{0}', steps.version.outputs.VERSION) || '' }}
+            xgone/migpt-ultimate:latest
+            xgone/migpt-ultimate:${{ github.sha }}
+            ${{ steps.version.outputs.VERSION != '' && format('xgone/migpt-ultimate:{0}', steps.version.outputs.VERSION) || '' }}
           labels: |
             org.opencontainers.image.title=migpt-ultimate
             org.opencontainers.image.description=小爱音箱终极解决方案
