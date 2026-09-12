@@ -1,5 +1,6 @@
 import express from 'express';
 import { MiGPT, type MiGPTConfig } from '@mi-gpt/next';
+import { MiMessage } from '@mi-gpt/next/message';
 import { ChatBot } from '@mi-gpt/chat';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -709,6 +710,54 @@ function loadConfig(configPath: string): WebConfig {
   return YAML.parse(content) as WebConfig;
 }
 
+function installEarlyMessagePolling(): void {
+  const manager = MiMessage as any;
+  if (manager.__migptUltimateEarlyPolling) {
+    return;
+  }
+  if (
+    typeof manager._fetchHistoryMsgs !== 'function' ||
+    typeof manager._fetchNextTempMessage !== 'function' ||
+    typeof manager._fetchNext2Messages !== 'function'
+  ) {
+    console.warn('[MiMessage] 当前 @mi-gpt/next 版本不支持提前处理未完成消息');
+    return;
+  }
+
+  // The stock reader filters out records without an answer, which waits until
+  // XiaoAI has already generated and started its fallback speech.
+  manager._fetchNext2Messages = async function () {
+    const messages = await this._fetchHistoryMsgs({ limit: 2, filterAnswer: false });
+    const lastMessage = this._lastQueryMsg;
+    const newestMessage = messages[0];
+
+    if (
+      !lastMessage ||
+      !newestMessage ||
+      newestMessage.timestamp <= lastMessage.timestamp
+    ) {
+      return undefined;
+    }
+
+    if (
+      messages.length === 1 ||
+      messages[messages.length - 1].timestamp <= lastMessage.timestamp
+    ) {
+      this._lastQueryMsg = newestMessage;
+      return newestMessage;
+    }
+
+    for (const message of messages) {
+      if (message.timestamp > lastMessage.timestamp) {
+        this._tempQueryMsgs.push(message);
+      }
+    }
+    return this._fetchNextTempMessage();
+  };
+  manager.__migptUltimateEarlyPolling = true;
+  console.log('[MiMessage] 已启用提前处理未完成消息');
+}
+
 function buildMiGPTConfig(webConfig: WebConfig): MiGPTConfig {
   const ttsCommand = webConfig.ttsCommand;
   const useCustomTTS = webConfig.tts?.provider && webConfig.publicURL;
@@ -1135,6 +1184,7 @@ app.post('/api/start', async (_req, res) => {
   }
   try {
     webConfig = loadConfig(configPath);
+    installEarlyMessagePolling();
     const migptConfig = buildMiGPTConfig(webConfig);
     
     console.log = (...args: any[]) => {

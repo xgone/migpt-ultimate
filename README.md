@@ -116,7 +116,7 @@ ttsCommand:
 
 ### Q：小爱同学总是抢话或说“对不起，我还在学习中”？
 
-修复版会在调用模型前直接执行 `MiNA.stop()`，并在配置了 `ttsCommand` 时播放“正在思考中”，可以减少原生小爱抢先回复。L05B/L05C 请使用 `ttsCommand: [5, 3]`。
+修复版会在对话答案尚未生成时就处理用户消息，调用模型前直接执行 `MiNA.stop()`，并在配置了 `ttsCommand` 时播放“正在思考中”，可以进一步减少原生小爱抢先回复。L05B/L05C 请使用 `ttsCommand: [5, 3]`。
 
 小米原生固件的云端回复存在竞态，未刷机时仍不能保证百分之百打断。需要完全禁止原生抢答时，请参考 [Open-XiaoAI](https://github.com/idootop/open-xiaoai)。
 
