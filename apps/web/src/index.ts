@@ -254,6 +254,14 @@ const HTML = `<!DOCTYPE html>
         </div>
       </div>
       <div class="form-section">
+        <label class="form-label">直接播放文字</label>
+        <textarea class="form-input" id="manualText" maxlength="500" placeholder="输入要让音箱播放的内容"></textarea>
+        <div class="actions">
+          <button class="btn-action btn-save" id="btnManualPlay" onclick="playManualText()" disabled>播放文字</button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="form-section">
         <label class="form-label">小米 ID</label>
         <input type="text" class="form-input" id="userId" placeholder="小米账号ID（纯数字）">
       </div>
@@ -414,10 +422,14 @@ const HTML = `<!DOCTYPE html>
         const text = document.getElementById('statusText');
         const btnStart = document.getElementById('btnStart');
         const btnStop = document.getElementById('btnStop');
+        const btnManualPlay = document.getElementById('btnManualPlay');
         bar.className = 'status-bar ' + (data.running ? 'running' : 'stopped');
         text.textContent = data.running ? '运行中' : '已停止';
         btnStart.disabled = data.running;
         btnStop.disabled = !data.running;
+        if (btnManualPlay && !btnManualPlay.dataset.playing) {
+          btnManualPlay.disabled = !data.running;
+        }
       } catch(e) { console.log('[前端] updateStatus error:', e); }
     }
     var aiProviders = {
@@ -617,6 +629,39 @@ const HTML = `<!DOCTYPE html>
       await fetch('/api/stop', {method: 'POST'});
       updateStatus();
     }
+    async function playManualText() {
+      const input = document.getElementById('manualText');
+      const button = document.getElementById('btnManualPlay');
+      const text = input ? input.value.trim() : '';
+      if (!text) {
+        showToast('请输入要播放的文字', 'error');
+        return;
+      }
+
+      button.disabled = true;
+      button.dataset.playing = 'true';
+      button.textContent = '播放中...';
+      try {
+        const res = await fetch('/api/play-text', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          showToast(data.error || '播放失败', 'error');
+          return;
+        }
+        showToast('已发送到音箱', 'success');
+        input.value = '';
+      } catch(e) {
+        showToast('播放请求失败: ' + String(e), 'error');
+      } finally {
+        button.dataset.playing = '';
+        button.textContent = '播放文字';
+        updateStatus();
+      }
+    }
     function showToast(msg, type) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -787,11 +832,7 @@ function buildMiGPTConfig(webConfig: WebConfig): MiGPTConfig {
       // Keep the speaker occupied while the external model is responding.
       if (ttsCommand) {
         try {
-          const thinking = await engine.MiOT.doAction(
-            ttsCommand[0],
-            ttsCommand[1],
-            '正在思考中',
-          );
+          const thinking = await playConfiguredText(engine, webConfig, '正在思考中', '思考提示');
           console.log(`[TTS] 思考提示播放结果: ${thinking}`);
         } catch (e) {
           console.warn('[TTS] 思考提示播放失败:', e);
@@ -802,34 +843,10 @@ function buildMiGPTConfig(webConfig: WebConfig): MiGPTConfig {
       if (!text) return { handled: true };
       addLog('ai', `🤖 AI 回答: ${text}`);
       console.log(`🔊 ${text}`);
-      if (useCustomTTS && ttsBaseURL) {
-        const speaker = webConfig.tts?.defaultSpeaker || 'zh_female_daimengchuanmei_moon_bigtts';
-        const ttsUrl = `${ttsBaseURL}${ttsSecretPath}/tts/tts.mp3?speaker=${speaker}+text=${encodeURIComponent(text)}`;
-        console.log('[TTS] Playing URL:', ttsUrl);
-        try {
-          const stopped = await engine.MiNA.stop();
-          console.log('[TTS] 播放自定义音频前停止结果:', stopped);
-          const result = await engine.speaker.play({ url: ttsUrl });
-          console.log('[TTS] play结果:', result);
-        } catch (e) {
-          console.error('[TTS] play错误:', e);
-        }
-      } else if (ttsCommand) {
-        try {
-          const stopped = await engine.MiNA.stop();
-          console.log('[TTS] 播放 AI 答案前停止结果:', stopped);
-          const result = await engine.MiOT.doAction(ttsCommand[0], ttsCommand[1], text);
-          console.log(`[TTS] MIoT [${ttsCommand[0]},${ttsCommand[1]}] 播放结果: ${result}`);
-        } catch (e) {
-          console.error('[TTS] MIoT 播放错误:', e);
-        }
-      } else {
-        try {
-          const result = await engine.speaker.play({ text });
-          console.log('[TTS] MiNA 播放结果:', result);
-        } catch (e) {
-          console.error('[TTS] MiNA 播放错误:', e);
-        }
+      try {
+        await playConfiguredText(engine, webConfig, text, 'AI答案');
+      } catch (e) {
+        console.error('[TTS] AI 答案播放错误:', e);
       }
       return { handled: true };
     },
@@ -884,6 +901,53 @@ const ttsSecret = nanoid();
 const ttsSecretPath = '/' + ttsSecret;
 const ttsPath = ttsSecretPath + '/tts/tts.mp3';
 const ttsSpeakersPath = ttsSecretPath + '/tts/speakers';
+const MAX_MANUAL_TEXT_LENGTH = 500;
+
+let playbackQueue: Promise<boolean> = Promise.resolve(true);
+
+function enqueuePlayback(task: () => Promise<boolean>): Promise<boolean> {
+  const next = playbackQueue.then(task, task);
+  playbackQueue = next.then(() => true, () => true);
+  return next;
+}
+
+function playConfiguredText(
+  engine: any,
+  config: WebConfig,
+  text: string,
+  source: string,
+): Promise<boolean> {
+  return enqueuePlayback(async () => {
+    const ttsBaseURL = config.publicURL;
+    const useCustomTTS = Boolean(config.tts?.provider && ttsBaseURL);
+
+    if (useCustomTTS && ttsBaseURL) {
+      const speaker = config.tts?.defaultSpeaker || 'zh_female_daimengchuanmei_moon_bigtts';
+      const ttsUrl = `${ttsBaseURL}${ttsSecretPath}/tts/tts.mp3?speaker=${speaker}+text=${encodeURIComponent(text)}`;
+      console.log(`[TTS] ${source} URL:`, ttsUrl);
+      const stopped = await engine.MiNA.stop();
+      console.log(`[TTS] ${source} 播放前停止结果:`, stopped);
+      const result = await engine.speaker.play({ url: ttsUrl });
+      console.log(`[TTS] ${source} 播放结果:`, result);
+      return Boolean(result);
+    }
+
+    const ttsCommand = config.ttsCommand;
+    if (ttsCommand) {
+      const stopped = await engine.MiNA.stop();
+      console.log(`[TTS] ${source} 播放前停止结果:`, stopped);
+      const result = await engine.MiOT.doAction(ttsCommand[0], ttsCommand[1], text);
+      console.log(`[TTS] ${source} MIoT [${ttsCommand[0]},${ttsCommand[1]}] 播放结果: ${result}`);
+      return Boolean(result);
+    }
+
+    const stopped = await engine.MiNA.stop();
+    console.log(`[TTS] ${source} 播放前停止结果:`, stopped);
+    const result = await engine.speaker.play({ text });
+    console.log(`[TTS] ${source} MiNA 播放结果:`, result);
+    return Boolean(result);
+  });
+}
 
 app.get('/api/tts-speakers', (_req, res) => {
   res.json([
@@ -1120,12 +1184,15 @@ app.get(ttsPath, (req, res) => {
   }
 });
 
-app.get('/', (req, res) => {
-  const sessionAuth = (req.session as any)?.auth;
+function isAuthenticated(req: any): boolean {
+  const sessionAuth = req.session?.auth;
   const cookieAuth = req.cookies?.auth;
   const expectedHash = hashPassword(AUTH_USERNAME + AUTH_PASSWORD);
-  const isLoggedIn = sessionAuth === expectedHash || cookieAuth === expectedHash;
-  if (!isLoggedIn) {
+  return sessionAuth === expectedHash || cookieAuth === expectedHash;
+}
+
+app.get('/', (req, res) => {
+  if (!isAuthenticated(req)) {
     return res.send(LOGIN_HTML);
   }
   res.send(HTML);
@@ -1174,6 +1241,47 @@ app.put('/api/config', (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: String(error) });
+  }
+});
+
+app.post('/api/play-text', async (req, res) => {
+  if (!isAuthenticated(req)) {
+    res.status(401).json({ success: false, error: '请先登录' });
+    return;
+  }
+  if (!isRunning || !webConfig) {
+    res.status(409).json({ success: false, error: '请先启动服务' });
+    return;
+  }
+
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) {
+    res.status(400).json({ success: false, error: '请输入要播放的文字' });
+    return;
+  }
+  if (text.length > MAX_MANUAL_TEXT_LENGTH) {
+    res.status(400).json({
+      success: false,
+      error: `播放文字不能超过 ${MAX_MANUAL_TEXT_LENGTH} 个字符`,
+    });
+    return;
+  }
+
+  addLog('system', `手动播放文字: ${text}`);
+  try {
+    const result = await playConfiguredText(MiGPT, webConfig, text, '手动文字');
+    if (!result) {
+      addLog('system', '手动播放失败：设备未接受播放请求');
+      res.status(502).json({ success: false, error: '设备未接受播放请求' });
+      return;
+    }
+    addLog('system', '手动播放完成');
+    res.json({ success: true });
+  } catch (error) {
+    const message = String(error);
+    addLog('system', '手动播放失败: ' + message);
+    console.error('[TTS] 手动播放错误:', error);
+    res.status(500).json({ success: false, error: message });
   }
 });
 
